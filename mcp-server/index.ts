@@ -771,8 +771,7 @@ Note: Includes 200ms delay after command execution to ensure it completes before
       // Convert string to ASCII byte codes
       const bytes = [...command].map(c => c.charCodeAt(0));
       console.error(`[DEBUG] Writing command to ${targetPaneId}: ${command}`);
-      await $`zellij -s ${sessionName} action write ${bytes.join(' ')}`.quiet();
-      await $`zellij -s ${sessionName} action write 10`.quiet(); // Enter
+      await $`zellij -s ${sessionName} action write ${bytes} 10`.quiet();
       
       // Wait for command to execute (200ms should be enough for simple commands)
       await new Promise(resolve => setTimeout(resolve, 200));
