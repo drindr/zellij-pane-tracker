@@ -1,0 +1,3 @@
+[toolchain]
+channel = "stable" # or "nightly", "1.x.x" etc.
+targets = ["wasm32-wasip1"]

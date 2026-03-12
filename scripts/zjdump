@@ -1,102 +1,130 @@
-#!/usr/bin/env zsh
+#!/usr/bin/env bash
 # Dump Zellij pane content with full scrollback
-# Usage: 
+# Usage:
 #   zjdump 2        # Dump terminal_2 by ID
-#   zjdump Pane#2   # Dump pane by display name (from pane-tracker JSON)
+#   zjdump "Pane #2" # Dump pane by display name (from pane-tracker JSON)
 #   zjdump          # Dump current focused pane
 
-[[ -z "$ZELLIJ" ]] && { echo "Not in Zellij"; exit 1; }
+set -euo pipefail
 
-# If no argument, dump current pane
-if [[ -z "$1" ]]; then
-    zellij action dump-screen --full /tmp/zjd-current.txt
-    cat /tmp/zjd-current.txt
-    exit 0
+if [[ -z "${ZELLIJ:-}" ]]; then
+  echo "Not in Zellij"
+  exit 1
 fi
 
-# Parse argument - could be terminal ID or display name
+# If no argument, dump current pane
+if [[ $# -eq 0 ]]; then
+  zellij action dump-screen --full /tmp/zjd-current.txt
+  cat /tmp/zjd-current.txt
+  exit 0
+fi
+
 target="$1"
 pane_json="/tmp/zj-pane-names.json"
+target_id=""
 
-# Check if pane-tracker JSON exists
+# Resolve target -> terminal_<n> id (or terminal_<n> already)
 if [[ ! -f "$pane_json" ]]; then
-    echo "Warning: Pane tracker not running ($pane_json missing)"
-    echo "Falling back to terminal_${target}"
-    target_id="terminal_${target}"
+  echo "Warning: Pane tracker not running ($pane_json missing)"
+  echo "Falling back to terminal_${target}"
+  target_id="terminal_${target}"
 else
-    if [[ "$target" =~ ^[0-9]+$ ]]; then
-        target_id="terminal_${target}"
-    elif [[ "$target" =~ ^terminal_ ]]; then
-        target_id="$target"
-    else
-        # Search by display name in JSON
-        target_id=$(jq -r --arg name "$target" '.panes | to_entries[] | select(.value == $name) | .key' "$pane_json" 2>/dev/null | grep "^terminal_" | head -1)
-        if [[ -z "$target_id" ]]; then
-            # Try partial match
-            search_name=$(echo "$target" | sed 's/#/ #/g')
-            target_id=$(jq -r --arg name "$search_name" '.panes | to_entries[] | select(.value | contains($name)) | .key' "$pane_json" 2>/dev/null | grep "^terminal_" | head -1)
-        fi
-        if [[ -z "$target_id" ]]; then
-            echo "Pane '$target' not found in pane tracker"
-            echo "Available panes:"
-            jq -r '.panes | to_entries[] | select(.key | startswith("terminal_")) | "  \(.key): \(.value)"' "$pane_json"
-            exit 1
-        fi
+  if [[ "$target" =~ ^[0-9]+$ ]]; then
+    target_id="terminal_${target}"
+  elif [[ "$target" =~ ^terminal_ ]]; then
+    target_id="$target"
+  else
+    # Search by exact display name in JSON
+    target_id="$(
+      jq -r --arg name "$target" \
+        '.panes | to_entries[] | select(.value == $name) | .key' \
+        "$pane_json" 2>/dev/null \
+      | grep '^terminal_' \
+      | head -n 1
+    )"
+
+    if [[ -z "$target_id" ]]; then
+      # Try partial match (same trick as the zsh version)
+      search_name="$(printf '%s' "$target" | sed 's/#/ #/g')"
+      target_id="$(
+        jq -r --arg name "$search_name" \
+          '.panes | to_entries[] | select(.value | contains($name)) | .key' \
+          "$pane_json" 2>/dev/null \
+        | grep '^terminal_' \
+        | head -n 1
+      )"
     fi
+
+    if [[ -z "$target_id" ]]; then
+      echo "Pane '$target' not found in pane tracker"
+      echo "Available panes:"
+      jq -r '.panes
+             | to_entries[]
+             | select(.key | startswith("terminal_"))
+             | "  \(.key): \(.value)"' \
+        "$pane_json"
+      exit 1
+    fi
+  fi
 fi
 
 n="${target_id#terminal_}"
 f="/tmp/zjd-${n}.txt"
 
-# Check if already on target pane (fast path)
-current_pane=$(zellij action list-clients 2>/dev/null | tail -1 | awk '{print $2}')
+# Determine current focused pane
+current_pane="$(zellij action list-clients 2>/dev/null | tail -n 1 | awk '{print $2}')"
+
+# Fast path if already on target
 if [[ "$current_pane" == "$target_id" ]]; then
-    zellij action dump-screen --full "$f"
-    cat "$f"
-    exit 0
+  zellij action dump-screen --full "$f"
+  cat "$f"
+  exit 0
 fi
 
 # Save current position to return
-origin_tab=$(zellij action query-tab-names 2>/dev/null | head -1)
+origin_tab="$(zellij action query-tab-names 2>/dev/null | head -n 1)"
 origin_pane="$current_pane"
 
 # Get list of tabs
-tabs=($(zellij action query-tab-names 2>/dev/null))
+mapfile -t tabs < <(zellij action query-tab-names 2>/dev/null)
+
+found=0
 
 # Search across all tabs
-found=0
 for tab in "${tabs[@]}"; do
-    zellij action go-to-tab-name "$tab" 2>/dev/null
-    
-    # Cycle through panes in this tab
-    local first_pane=""
-    for i in {1..10}; do
-        current_pane=$(zellij action list-clients 2>/dev/null | tail -1 | awk '{print $2}')
-        
-        # Detect wrap-around
-        [[ -z "$first_pane" ]] && first_pane="$current_pane"
-        [[ "$current_pane" == "$first_pane" && $i -gt 1 ]] && break
-        
-        if [[ "$current_pane" == "$target_id" ]]; then
-            zellij action dump-screen --full "$f"
-            found=1
-            break 2
-        fi
-        zellij action focus-next-pane
-    done
+  zellij action go-to-tab-name "$tab" 2>/dev/null || true
+
+  first_pane=""
+  for _ in {1..10}; do
+    current_pane="$(zellij action list-clients 2>/dev/null | tail -n 1 | awk '{print $2}')"
+
+    if [[ -z "$first_pane" ]]; then
+      first_pane="$current_pane"
+    elif [[ "$current_pane" == "$first_pane" ]]; then
+      break
+    fi
+
+    if [[ "$current_pane" == "$target_id" ]]; then
+      zellij action dump-screen --full "$f"
+      found=1
+      break 2
+    fi
+
+    zellij action focus-next-pane
+  done
 done
 
 # Return to original position
-zellij action go-to-tab-name "$origin_tab" 2>/dev/null
-for i in {1..10}; do
-    current_pane=$(zellij action list-clients 2>/dev/null | tail -1 | awk '{print $2}')
-    [[ "$current_pane" == "$origin_pane" ]] && break
-    zellij action focus-next-pane
+zellij action go-to-tab-name "$origin_tab" 2>/dev/null || true
+for _ in {1..10}; do
+  current_pane="$(zellij action list-clients 2>/dev/null | tail -n 1 | awk '{print $2}')"
+  [[ "$current_pane" == "$origin_pane" ]] && break
+  zellij action focus-next-pane
 done
 
-if [[ $found -eq 1 ]]; then
-    cat "$f"
+if [[ "$found" -eq 1 ]]; then
+  cat "$f"
 else
-    echo "Pane $target_id not found"
-    exit 1
+  echo "Pane $target_id not found"
+  exit 1
 fi
