@@ -15,8 +15,10 @@ Your AI assistant can now:
 
 ## Requirements
 
-- Zellij 0.40.0+ (must support `zellij action list-panes --json`)
+- Zellij 0.44.0+ (must support `zellij action list-panes --json`)
 - [Bun](https://bun.sh/) runtime
+
+> ⚠️ **WARNING:** Zellij 0.44.0 has not been released yet (as of 2025/03/18). This MCP server requires the `--json` flag for `zellij action list-panes`, which is only available in the upcoming 0.44.0 release. You can build from source or wait for the official release.
 
 ## Quick Start
 
@@ -154,8 +156,10 @@ MIT
 
 ## Author
 
-Nakul Tiruviluamala ([@theslyprofessor](https://github.com/theslyprofessor))
+This repository is a continuation of the original work by Nakul Tiruviluamala ([@theslyprofessor](https://github.com/theslyprofessor)). It is now maintained independently as the primary source for this project.
 
 ---
 
 **Note:** This project previously included a Zellij plugin and companion script. As of v1.0.0, it uses only native Zellij CLI commands (`zellij action list-panes --json`) and no longer requires a plugin.
+
+
